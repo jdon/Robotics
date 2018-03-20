@@ -1,17 +1,21 @@
 #!/usr/bin/env python
 # BEGIN ALL
-import rospy, cv2, cv_bridge, numpy
-from sensor_msgs.msg import Image, LaserScan
-from geometry_msgs.msg import Twist, PoseStamped
-from nav_msgs.msg import OccupancyGrid, MapMetaData
-from move_base_msgs.msg import MoveBaseGoal, MoveBaseAction
-import Extras as extra
-import numpy as np
-import actionlib
 import math
-from math import sin, cos, radians, pi
+import numpy as np
+from math import sin, cos
+
+import actionlib
+import cv2
+import cv_bridge
+import numpy
+import rospy
 import tf2_ros
-import tf
+from geometry_msgs.msg import Twist, PoseStamped
+from move_base_msgs.msg import MoveBaseGoal, MoveBaseAction
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import Image
+
+import Extras as extra
 
 
 class Goal:
@@ -29,23 +33,25 @@ class Goal:
         return self.mask
 
 
-class Follower:
+def point_pos(x, y, d, rad):
+    newx = x + (d - 1.2) * cos(rad)
+    newy = y + (d - 1.2) * sin(rad)
+    return newx, newy
+
+
+class self:
     np.set_printoptions(threshold=numpy.nan)
     current_x = 0
     current_y = 0
     current_rad = 0
     resolution = 0.05
     origin = 0
-    Map = 0
-    CostMap = 0
     Header = 0
     width = 216.0
+    height = 250.0
+
     Depthimage = None
     DepthimageMesaures = 0
-    height = 250.0
-    distance = 0
-    numofPointVisited = 0
-    cordsList = []
     bridge = cv_bridge.CvBridge()
     cv2.namedWindow("window", 1)
     twist = Twist()
@@ -53,13 +59,10 @@ class Follower:
     Yellow = Goal("Yellow", 25, 35)
     Green = Goal("Green", 60, 70)
     Red = Goal("Red", 0, 2)
+
+
     foundColour = 0
-    running = 0
-    center = 0
-    MaxDest = 0
-    CurrentDest = 0
     destinations = []
-    RobotLocation = []
     currentGoal = None
     fixedPoints = []
     allFound = 0
@@ -78,7 +81,8 @@ class Follower:
         self.goal_pub = rospy.Publisher('/turtlebot/move_base_simple/goal', PoseStamped, queue_size=1)
         self.image_sub = rospy.Subscriber('/turtlebot/camera/rgb/image_raw', Image, self.image_callback)
         self.depth_sub = rospy.Subscriber('/turtlebot/camera/depth/image_raw', Image, self.depth_callback)
-        self.costMap = rospy.Subscriber('/turtlebot/move_base/global_costmap/costmap', OccupancyGrid,  self.costmap_callback)
+        self.costMap = rospy.Subscriber('/turtlebot/move_base/global_costmap/costmap', OccupancyGrid,
+                                        self.costmap_callback)
 
         self.twist = Twist()
         self.goal = MoveBaseGoal()
@@ -87,9 +91,10 @@ class Follower:
         listener = tf2_ros.TransformListener(tfBuffer)
         rate = rospy.Rate(5.0)
 
-        #use a ros transform to obtain the current location of the robot
+        # use a ros transform to obtain the current location of the robot
         while not rospy.is_shutdown():
             try:
+                # look up the transform
                 test = tfBuffer.lookup_transform('map', 'turtlebot/base_footprint', rospy.Time())
                 pos_x = test.transform.translation.x
                 pos_y = test.transform.translation.y
@@ -97,16 +102,15 @@ class Follower:
                 q_x = test.transform.rotation.x
                 q_y = test.transform.rotation.y
                 q_z = test.transform.rotation.z
-                roll, putch, yaw = extra.quaternion_to_euler_angle(q_w, q_x, q_y, q_z)
-                Follower.current_x = pos_x
-                Follower.current_y = pos_y
-                Follower.current_rad = yaw
+                roll, pitch, yaw = extra.quaternion_to_euler_angle(q_w, q_x, q_y, q_z)
+                self.current_x = pos_x
+                self.current_y = pos_y
+                self.current_rad = yaw
 
-                #check if within one meter of a goal
+                # check if within one meter of a goal
                 goals = [self.Blue, self.Yellow, self.Red, self.Green]
                 for goal in goals:
                     if goal.location is not None:
-                        # have current location
                         (x, y) = goal.location
                         if not goal.shownFound:
                             if (pos_x + 1 > x and x > pos_x - 1):
@@ -126,8 +130,8 @@ class Follower:
     def Map_convert(self, (goal_x, goal_y)):
         # convert from costmap to cords
         if len(self.fixedPoints) == 0:
-            x = Follower.origin.position.x + (goal_x * Follower.resolution);
-            y = Follower.origin.position.y + (goal_y * Follower.resolution);
+            x = self.origin.position.x + (goal_x * self.resolution);
+            y = self.origin.position.y + (goal_y * self.resolution);
         else:
             x = goal_x
             y = goal_y
@@ -135,7 +139,7 @@ class Follower:
         self.moveToGoal(x, y)
 
     def moveToGoal(self, xGoal, yGoal):
-        #sends the goal to the simple action server for the navigation stack
+        # sends the goal to the simple action server for the navigation stack
         goal = MoveBaseGoal()
         goal.target_pose.header.frame_id = "map"
         goal.target_pose.header.stamp = rospy.Time.now()
@@ -145,7 +149,7 @@ class Follower:
         self.client.send_goal(goal, done_cb=self.donecb, feedback_cb=self.FeedbackCB)
 
     def donecb(self, state, result):
-        #Called when goal is done, gets navigation stack to move to next point
+        # Called when goal is done, gets navigation stack to move to next point
         print("Done callback" + str(result))
         if (state != 2):
             print("Current destinations" + str(self.destinations))
@@ -155,7 +159,7 @@ class Follower:
         daksdj = "dsd"
 
     def image_callback(self, msg):
-        #finds coloured poles from the camera
+        # finds coloured poles from the camera
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
@@ -170,31 +174,31 @@ class Follower:
         res = cv2.bitwise_and(image, image, mask=addedMask)
         average_depth = 1.5
         dres = None
-        #setup forloop
+        # setup for loop
         goals = [self.Blue, self.Yellow, self.Red, self.Green]
         h, w, d = image.shape
         for goal in goals:
-            #get depth camera info
-            if Follower.Depthimage is not None:
+            # get depth camera info
+            if self.Depthimage is not None:
                 # apply mask of all goals to depth camera to display to user
-                dres = cv2.bitwise_and(Follower.Depthimage, Follower.Depthimage, mask=addedMask)
+                dres = cv2.bitwise_and(self.Depthimage, self.Depthimage, mask=addedMask)
                 # get actual depth values for the specfic goal
-                depth = cv2.bitwise_and(Follower.Depthimage, Follower.DepthimageMesaures, mask=goal.mask)
+                depth = cv2.bitwise_and(self.Depthimage, self.DepthimageMesaures, mask=goal.mask)
                 # get the average value of values in the mask
                 depth[depth == 0] = np.nan
                 average_depth = np.nanmean(depth)
                 if not np.isnan(average_depth):
                     # using depth and current postion, get the x and y to the thing in the mask
-                    x, y = self.point_pos(Follower.current_x, Follower.current_y, average_depth, Follower.current_rad)
-            #check if the moment is big enough to be a coloured pole
+                    x, y = point_pos(self.current_x, self.current_y, average_depth, self.current_rad)
+            # check if the moment is big enough to be a coloured pole
             M = cv2.moments(goal.mask)
             if M['m00'] > 50000.0:  # can see colour
                 # lock the this loop so it only looks for one colour
-                if Follower.foundColour == 0 and not goal.found:
-                    Follower.foundColour = 1
+                if self.foundColour == 0 and not goal.found:
+                    self.foundColour = 1
                     goal.running = 1
                 # coloured pole is in the vision of the camera, now center the camera
-                if (goal.running == 1 and Follower.foundColour == 1 and goal.found == 0):
+                if goal.running == 1 and self.foundColour == 1 and goal.found == 0:
                     cx = int(M['m10'] / M['m00'])
                     cy = int(M['m01'] / M['m00'])
                     cv2.circle(image, (cx, cy), 20, (0, 0, 255), -1)
@@ -202,7 +206,7 @@ class Follower:
                     self.twist.angular.z = -float(err) / 200
                     self.cmd_vel_pub.publish(self.twist)
                     # camera is centered so location of the coloured pole and save it
-                    if (err == 0):
+                    if err == 0:
                         if 'y' in locals():
                             print(M['m00'])
                             print("found " + goal.name)
@@ -210,7 +214,7 @@ class Follower:
                             self.destinations.append(goal.location)
                             print(goal.location)
                             goal.found = 1
-                            Follower.foundColour = 0
+                            self.foundColour = 0
                             rospy.sleep(1)
 
                 if goal.found:
@@ -219,29 +223,30 @@ class Follower:
                         if average_depth <= 1 and not goal.shownFound:
                             # within one meter of the goal
                             self.FoundGoal(goal)
-                            Follower.foundColour = 0
+                            self.foundColour = 0
             else:
-                if (goal.found != 0 and Follower.foundColour == 1):
+                # reset if it sees both but moves to view only one coloured pole
+                if goal.found != 0 and self.foundColour == 1:
                     goal.running = 0
-                    Follower.foundColour = 0
-            # END CONTROL
-        amounFound = 0
+                    self.foundColour = 0
+        # check all goals are found
+        amountFound = 0
         for go in goals:
             if go.found:
-                amounFound += 1
-        if amounFound == 4 and self.allFound == 0:
-            # found all the poles
+                amountFound += 1
+        if amountFound == 4 and self.allFound == 0:
+            # found all the poles so set the destination to be the location of the poles
             self.allFound = 1
             print("Found all poles")
             robotdestination = []
             for goa in goals:
                 # add to the list if the robot is not already found
-                self.RobotLocation.append(goa.location)
-            self.destinations = self.RobotLocation
+                robotdestination.append(goa.location)
+            self.destinations = robotdestination
             print("Changing destinations to pole locations: " + str(
-                self.RobotLocation) + "The current destionations are:" + str(self.destinations))
-            # self.cancelAllGoals()
+                robotdestination) + "The current destionations are:" + str(self.destinations))
             self.nextDestination()
+        #display the depth and rgb camera images
         if dres is not None:
             cv2.imshow("depth", dres)
         cv2.imshow("window", res)
@@ -260,36 +265,23 @@ class Follower:
         else:
             print("Finished?")
 
-    def point_pos(self, x, y, d, rad):
-        newx = x + (d - 1.2) * cos(rad)
-        newy = y + (d - 1.2) * sin(rad)
-        return newx, newy
-
     def depth_callback(self, msg):
-        Follower.DepthimageMesaures = self.bridge.imgmsg_to_cv2(msg, "passthrough")
-        Follower.Depthimage = self.bridge.imgmsg_to_cv2(msg, "32FC1")
+        self.DepthimageMesaures = self.bridge.imgmsg_to_cv2(msg, "passthrough")
+        self.Depthimage = self.bridge.imgmsg_to_cv2(msg, "32FC1")
 
     def costmap_callback(self, msg):
-        Follower.Header = msg.header
-        MapData = msg.data
-        Follower.resolution = msg.info.resolution
-        Follower.origin = msg.info.origin
+        self.resolution = msg.info.resolution
+        self.origin = msg.info.origin
         data = np.asarray(msg.data, dtype=np.uint8).reshape(msg.info.height, msg.info.width)
-        self.costmap = data
-        newimg = cv2.dilate(self.costmap, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=3)
-        # newimg = cv2.dilate(newimg, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)), iterations=5)
+        newimg = cv2.dilate(data, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=3)
         if len(self.destinations) == 0:
             for y in range(35, msg.info.height - 35, 20):
                 for x in range(35, msg.info.width - 35, 20):
                     if newimg[y][x] <= 0:
                         self.destinations.append((y, x))
                         newimg[y][x] = 255
-        # print self.destinations
         cv2.imshow('com', newimg)
-        # self.fixedPoints = [(1.09, -4.18), (1.011, -2.00), (-4.42, 0.20), (-4.32, 4.93), (1.62, 4.68)]
-        # self.destinations = self.fixedPoints
         print(self.destinations)
-        # self.currentGoal = self.destinations.pop()
         self.nextDestination()
 
     def rotate(self):
@@ -334,6 +326,6 @@ class Follower:
 
 
 rospy.init_node('follower')
-follower = Follower()
+follower = self()
 rospy.spin()
 # END ALL
