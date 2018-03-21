@@ -27,6 +27,7 @@ class Goal:
 		self.LowerMask = np.array([lower, 40, 40])
 		self.found = 0
 		self.shownFound = None
+		self.actualLocation = None
 
 	def UpdateMask(self, image):
 		self.mask = cv2.inRange(image, self.LowerMask, self.UpperMask)
@@ -37,7 +38,6 @@ def point_pos(x, y, d, rad):
 	newx = x + (d - 0.5) * cos(rad)
 	newy = y + (d - 0.5) * sin(rad)
 	return newx, newy
-
 
 
 class self:
@@ -90,7 +90,7 @@ class self:
 
 		tfBuffer = tf2_ros.Buffer()
 		listener = tf2_ros.TransformListener(tfBuffer)
-		rate = rospy.Rate(5.0)
+		rate = rospy.Rate(10.0)
 
 		# use a ros transform to obtain the current location of the robot
 		while not rospy.is_shutdown():
@@ -112,10 +112,10 @@ class self:
 				goals = [self.Blue, self.Yellow, self.Red, self.Green]
 				for goal in goals:
 					if goal.location is not None:
-						(x, y) = goal.location
+						(x, y) = goal.actualLocation
 						if not goal.shownFound:
-							if (pos_x + 2 > x and x > pos_x - 2):
-								if (pos_y + 2 > y and y > pos_y - 2):
+							if (pos_x + 1.5 > x and x > pos_x - 1.5):
+								if (pos_y + 1.5 > y and y > pos_y - 1.5):
 									self.FoundGoal(goal)
 				rate.sleep()
 
@@ -125,20 +125,22 @@ class self:
 
 	def FoundGoal(self, goal):
 		goal.shownFound = True
-		print("Found the goal")
+		print("Found the goal " + goal.name)
 		self.rotate()
 
-
-	def cords_to_costmap(self,x, y):
-		newx = int((x - self.origin.position.x)/self.resolution)
+	def cords_to_costmap(self, x, y):
+		newx = int((x - self.origin.position.x) / self.resolution)
 		newy = int((y - self.origin.position.y) / self.resolution)
-		print("the new x and y are"+str(newx)+ " "+ str(newy))
+		# print("the new x and y are"+str(newx)+ " "+ str(newy))
 		# checks to see if the new cords are viable for the navigation stack
-		for poy in range(newy-20, newy+20):
-			for pox in range(newx-20, newx+20):
-				if self.dilatedCostmap[pox][poy] <= 0:
-					return pox, poy
-
+		for poy in range(newy - 20, newy + 20):
+			for pox in range(newx - 20, newx + 20):
+				try:
+					if self.dilatedCostmap[pox][poy] <= 0:
+						return pox, poy
+				except:
+					print(poy, pox, newx, newy)
+					return newx,newy
 
 	def Map_convert(self, (goal_x, goal_y)):
 		# convert from costmap to cords
@@ -151,7 +153,7 @@ class self:
 			print("Going to coloured pole location")
 			x = goal_x
 			y = goal_y
-		print("GoalX:" + str(goal_x) + " X: " + str(x) + " GoalY: " + str(goal_y) + " Y:" + str(y))
+		# print("GoalX:" + str(goal_x) + " X: " + str(x) + " GoalY: " + str(goal_y) + " Y:" + str(y))
 		self.moveToGoal(x, y)
 
 	def moveToGoal(self, xGoal, yGoal):
@@ -166,9 +168,9 @@ class self:
 
 	def donecb(self, state, result):
 		# Called when goal is done, gets navigation stack to move to next point
-		print("Done callback" + str(result))
 		if (state != 2):
-			print("Current destinations" + str(self.destinations))
+			# print("Current destinations" + str(self.destinations))
+			# print("Going to next destination at")
 			self.nextDestination()
 
 	def FeedbackCB(self, msg):
@@ -219,20 +221,18 @@ class self:
 					cy = int(M['m01'] / M['m00'])
 					cv2.circle(image, (cx, cy), 20, (0, 0, 255), -1)
 					err = cx - w / 2
-					self.twist.angular.z = -float(err) / 200
+					self.twist.angular.z = -float(err) / 500
 					self.cmd_vel_pub.publish(self.twist)
 					# camera is centered so location of the coloured pole and save it
 					if err == 0:
 						if 'y' in locals():
-							if(y != 0.0):
-								print(M['m00'])
-								print("found " + goal.name)
+							if (y != 0.0):
 								goal.location = self.cords_to_costmap(x, y)
+								goal.actualLocation = (x, y)
 								self.destinations.append(goal.location)
-								print(goal.location)
+								print("found " + goal.name + " pole it is at " + str(goal.location))
 								goal.found = 1
 								self.foundColour = 0
-								rospy.sleep(1)
 
 				if goal.found:
 					# goal is found now keep checking if we are within one meter of it
@@ -263,42 +263,50 @@ class self:
 			print("Changing destinations to pole locations: " + str(
 				robotdestination) + "The current destionations are:" + str(self.destinations))
 			self.nextDestination()
-		# display the depth and rgb camera images
-		if dres is not None:
-			cv2.imshow("depth", dres)
+		# display the rgb camera images
+		# if dres is not None:
+		# cv2.imshow("depth", dres)
 		cv2.imshow("window", res)
 		cv2.waitKey(3)
 
 	def cancelAllGoals(self):
+		#cancels all the goals and then goes to the next one
 		self.client.cancel_all_goals()
 		self.client.wait_for_result()
 		self.nextDestination()
 
 	def nextDestination(self):
-		print("Current Goal: " + str(self.currentGoal) + " current desintaions :" + str(self.destinations))
+		# gets the next item from destination list and sets as the goa
 		if (len(self.destinations) >= 1):
 			self.currentGoal = self.destinations.pop()
+			print("Going to " + str(self.currentGoal))
 			self.Map_convert(self.currentGoal)
 		else:
-			print("Finished?")
+			print("All destinations have been visited!, now finished?")
 
 	def depth_callback(self, msg):
+		# sets the depth camera to global variables
 		self.DepthimageMesaures = self.bridge.imgmsg_to_cv2(msg, "passthrough")
 		self.Depthimage = self.bridge.imgmsg_to_cv2(msg, "32FC1")
 
 	def costmap_callback(self, msg):
+		# get the cost map, conver it to a numpy array
 		self.resolution = msg.info.resolution
+		self.width = msg.info.width
+		self.height = msg.info.height
 		self.origin = msg.info.origin
 		data = np.asarray(msg.data, dtype=np.uint8).reshape(msg.info.height, msg.info.width)
 		self.dilatedCostmap = cv2.dilate(data, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=3)
+		# loop though all the points in the cost map with a stride of 20
 		if len(self.destinations) == 0:
-			for y in range(35, msg.info.height - 35, 20):
-				for x in range(35, msg.info.width - 35, 20):
+			for x in range(35, msg.info.width - 35, 20):
+				for y in range(35, msg.info.height - 35, 20):
 					if self.dilatedCostmap[y][x] <= 0:
+						#cost map is clear so add it the list of destinations
 						self.destinations.append((y, x))
 						self.dilatedCostmap[y][x] = 255
 		cv2.imshow('com', self.dilatedCostmap)
-		print(self.destinations)
+		print("The generated destinations are:" + str(self.destinations))
 		self.nextDestination()
 
 	def rotate(self):
